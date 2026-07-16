@@ -499,7 +499,7 @@ def get_overtime_view(page: ft.Page, db, state, show_snack, open_dialog_safe):
                 hrs_disp = f"{hrs:g} h"
 
             amt_color = "#10B981" if amt >= 0 else "#EF4444"
-            prefix = "+" if amt > 0 else ""
+            prefix = "+" if amt >= 0 else ""
             
             list_items.append(
                 ft.Container(
@@ -628,15 +628,14 @@ def get_overtime_view(page: ft.Page, db, state, show_snack, open_dialog_safe):
         def process_payment(e=None):
             try:
                 actual_paid = float(pay_amount_input.value)
-                today_str = datetime.now().strftime("%Y-%m-%d")
                 
                 c = db.conn.cursor()
                 
-                # Insert a single negative Unpaid record (Payment) to deduct from unpaid balance
-                c.execute("INSERT INTO overtime_history (worker_id, date, amount, hours, status, shift) VALUES (?, ?, ?, 0, 'Unpaid', 'Payment')", (worker_id, today_str, -actual_paid))
+                # Insert a single negative Unpaid record (Payment) to deduct from unpaid balance on the viewed date
+                c.execute("INSERT INTO overtime_history (worker_id, date, amount, hours, status, shift) VALUES (?, ?, ?, 0, 'Unpaid', 'Payment')", (worker_id, end_sql, -actual_paid))
                 
-                # Insert a single positive Paid record to increase the paid balance
-                c.execute("INSERT INTO overtime_history (worker_id, date, amount, hours, status, shift) VALUES (?, ?, ?, 0, 'Paid', 'Payment')", (worker_id, today_str, actual_paid))
+                # Insert a single positive Paid record to increase the paid balance on the viewed date
+                c.execute("INSERT INTO overtime_history (worker_id, date, amount, hours, status, shift) VALUES (?, ?, ?, 0, 'Paid', 'Payment')", (worker_id, end_sql, actual_paid))
                 
                 db.conn.commit()
                 

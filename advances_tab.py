@@ -19,7 +19,6 @@ def get_advances_view(page: ft.Page, db, state, show_snack, reload_weekly_cb, re
     worker_label = ft.Text("Click to Search & Select Worker...", color="#6B7280", size=15)
 
     def open_worker_picker(e=None):
-        # Use independent cursor to prevent thread crashes
         c = db.conn.cursor()
         c.execute("SELECT * FROM workers")
         workers = c.fetchall()
@@ -41,7 +40,7 @@ def get_advances_view(page: ft.Page, db, state, show_snack, reload_weekly_cb, re
                             ft.Container(
                                 content=ft.Text(w_type.upper(), size=10, weight="bold", color="#0284C7"), 
                                 bgcolor="#E0F2FE", 
-                                padding=ft.padding.symmetric(horizontal=6, vertical=2), 
+                                padding=ft.Padding.symmetric(horizontal=6, vertical=2), 
                                 border_radius=4
                             )
                         ], alignment=ft.MainAxisAlignment.SPACE_BETWEEN),
@@ -101,7 +100,7 @@ def get_advances_view(page: ft.Page, db, state, show_snack, reload_weekly_cb, re
         bgcolor="#F9FAFB", 
         border=ft.border.all(1, "#D1D5DB"), 
         border_radius=8, 
-        padding=ft.padding.symmetric(horizontal=12, vertical=12), 
+        padding=ft.Padding.symmetric(horizontal=12, vertical=12), 
         height=50, 
         ink=True
     )
@@ -120,9 +119,12 @@ def get_advances_view(page: ft.Page, db, state, show_snack, reload_weekly_cb, re
             return
         try:
             amt = float(amount_input.value)
-            # Run save operations in background
             def process_save():
-                db.add_advance(selected_worker["id"], amt, reason_input.value, date_input.value)
+                # Get the exact time to append to the date string
+                current_time = datetime.now().strftime("%I:%M %p")
+                full_date_with_time = f"{date_input.value} {current_time}"
+                
+                db.add_advance(selected_worker["id"], amt, reason_input.value, full_date_with_time)
                 load_advances_ui()
                 reload_weekly_cb()
                 reload_monthly_cb()
@@ -147,7 +149,7 @@ def get_advances_view(page: ft.Page, db, state, show_snack, reload_weekly_cb, re
                 reason_input
             ], tight=True, spacing=10), 
             width=380, 
-            padding=ft.padding.only(top=5, bottom=5)
+            padding=ft.Padding.only(top=5, bottom=5)
         ),
         actions=[
             ft.TextButton("Cancel", on_click=close_dialog), 
@@ -266,7 +268,7 @@ def get_advances_view(page: ft.Page, db, state, show_snack, reload_weekly_cb, re
                             ft.Icon(ft.Icons.DATE_RANGE, color="white" if is_active else COLOR_PRIMARY, size=18),
                             ft.Text(f"Week {week_num}: {curr_start.strftime('%d %b')} to {curr_end.strftime('%d %b %Y')}", weight="bold", color="white" if is_active else COLOR_TEXT_MAIN, size=13)
                         ]),
-                        padding=ft.padding.symmetric(vertical=10, horizontal=12),
+                        padding=ft.Padding.symmetric(vertical=10, horizontal=12),
                         bgcolor=COLOR_PRIMARY if is_active else COLOR_BG_LIGHT,
                         border_radius=8, ink=True, on_click=make_select_handler(curr_start)
                     )
@@ -329,7 +331,7 @@ def get_advances_view(page: ft.Page, db, state, show_snack, reload_weekly_cb, re
                 chip = ft.Container(
                     content=ft.Text(m, color="white" if is_active else COLOR_TEXT_SUB, weight="bold", size=11),
                     bgcolor=COLOR_PRIMARY if is_active else COLOR_BG_LIGHT,
-                    padding=ft.padding.symmetric(horizontal=10, vertical=8),
+                    padding=ft.Padding.symmetric(horizontal=10, vertical=8),
                     border_radius=8,
                     ink=True,
                     on_click=set_mode
@@ -389,7 +391,7 @@ def get_advances_view(page: ft.Page, db, state, show_snack, reload_weekly_cb, re
         content=month_label, 
         on_click=open_filter_dialog, 
         ink=True, 
-        padding=ft.padding.symmetric(horizontal=10, vertical=5), 
+        padding=ft.Padding.symmetric(horizontal=10, vertical=5), 
         border_radius=5, 
         tooltip="Click to Change View Filter"
     )
@@ -441,7 +443,6 @@ def get_advances_view(page: ft.Page, db, state, show_snack, reload_weekly_cb, re
         show_snack(page, "Advance Deleted", "red")
 
     def load_advances_ui(e=None):
-        # UI BATCHING AND INDEPENDENT CURSOR
         new_list_controls = []
         mode = state["adv_view_mode"]
         
@@ -470,7 +471,6 @@ def get_advances_view(page: ft.Page, db, state, show_snack, reload_weekly_cb, re
         c.execute(sql, tuple(params))
         all_adv = c.fetchall()
 
-        # Handle python-level filtering for Week and Range modes
         if mode == "Week":
             adv_data = [a for a in all_adv if st.strftime("%Y-%m-%d") <= a[0] <= en.strftime("%Y-%m-%d")]
         elif mode == "Date Range":
@@ -483,7 +483,7 @@ def get_advances_view(page: ft.Page, db, state, show_snack, reload_weekly_cb, re
         new_list_controls.append(
             ft.Container(
                 content=ft.Row([
-                    ft.Text("Date", width=100, weight="bold", color=COLOR_TEXT_SUB, size=13), 
+                    ft.Text("Date & Time", width=140, weight="bold", color=COLOR_TEXT_SUB, size=13), 
                     ft.Text("Name", width=180, weight="bold", color=COLOR_TEXT_SUB, size=13),
                     ft.Text("Type", width=100, weight="bold", color=COLOR_TEXT_SUB, size=13), 
                     ft.Text("Amount", width=120, weight="bold", color=COLOR_TEXT_SUB, size=13),
@@ -491,11 +491,10 @@ def get_advances_view(page: ft.Page, db, state, show_snack, reload_weekly_cb, re
                     ft.Text("Reason", width=250, weight="bold", color=COLOR_TEXT_SUB, size=13), 
                     ft.Text("Action", width=80, weight="bold", color=COLOR_TEXT_SUB, size=13, text_align=ft.TextAlign.CENTER),
                 ]), 
-                bgcolor=COLOR_BG_LIGHT, padding=ft.padding.symmetric(vertical=10, horizontal=15), border=ft.border.only(bottom=ft.border.BorderSide(2, COLOR_BORDER))
+                bgcolor=COLOR_BG_LIGHT, padding=ft.Padding.symmetric(vertical=10, horizontal=15), border=ft.border.only(bottom=ft.border.BorderSide(2, COLOR_BORDER))
             )
         )
 
-        # ISOLATED HOVER
         def make_hover(idx):
             def hover(ev):
                 ev.control.bgcolor = "#F1F5F9" if ev.data == "true" else ("white" if idx % 2 == 0 else "#FAFAFA")
@@ -515,7 +514,7 @@ def get_advances_view(page: ft.Page, db, state, show_snack, reload_weekly_cb, re
             new_list_controls.append(
                 ft.Container(
                     content=ft.Row([
-                        ft.Text(d, width=100, color=COLOR_TEXT_MAIN, size=13), 
+                        ft.Text(d, width=140, color=COLOR_TEXT_MAIN, size=13), 
                         ft.Text(w_name, width=180, weight="bold", color=COLOR_TEXT_MAIN, size=15),
                         ft.Text(w_type, width=100, color=COLOR_TEXT_SUB, size=13), 
                         ft.Text(f"{int(amt):,} PKR", width=120, weight="bold", color="#EF4444", size=14),
@@ -523,7 +522,7 @@ def get_advances_view(page: ft.Page, db, state, show_snack, reload_weekly_cb, re
                         ft.Text(rsn if rsn else "N/A", width=250, color=COLOR_TEXT_SUB, size=13), 
                         ft.Container(content=ft.Row([del_btn], alignment=ft.MainAxisAlignment.CENTER), width=80) 
                     ], vertical_alignment=ft.CrossAxisAlignment.CENTER), 
-                    padding=ft.padding.symmetric(vertical=8, horizontal=15), bgcolor="white" if visible_idx % 2 == 0 else "#FAFAFA", border=ft.border.only(bottom=ft.border.BorderSide(1, COLOR_BORDER)),
+                    padding=ft.Padding.symmetric(vertical=8, horizontal=15), bgcolor="white" if visible_idx % 2 == 0 else "#FAFAFA", border=ft.border.only(bottom=ft.border.BorderSide(1, COLOR_BORDER)),
                     on_hover=make_hover(visible_idx)
                 )
             )
