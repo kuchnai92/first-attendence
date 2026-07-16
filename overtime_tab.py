@@ -23,6 +23,14 @@ def get_overtime_view(page: ft.Page, db, state, show_snack, open_dialog_safe):
         c.execute("ALTER TABLE overtime_history ADD COLUMN status TEXT DEFAULT 'Unpaid'")
         db.conn.commit()
 
+    try:
+        c = db.conn.cursor()
+        c.execute("SELECT shift FROM overtime_history LIMIT 1")
+    except:
+        c = db.conn.cursor()
+        c.execute("ALTER TABLE overtime_history ADD COLUMN shift TEXT DEFAULT 'Morning'")
+        db.conn.commit()
+
     if "ot_view_mode" not in state:
         state["ot_view_mode"] = "Specific Date"
         state["ot_view_date"] = datetime.now()
@@ -135,7 +143,7 @@ def get_overtime_view(page: ft.Page, db, state, show_snack, open_dialog_safe):
                             ft.Icon(ft.Icons.DATE_RANGE, color="white" if is_active else COLOR_PRIMARY, size=18),
                             ft.Text(f"Week {week_num}: {curr_start.strftime('%d %b')} to {curr_end.strftime('%d %b %Y')}", weight="bold", color="white" if is_active else COLOR_TEXT_MAIN, size=13)
                         ]),
-                        padding=ft.padding.symmetric(vertical=10, horizontal=12),
+                        padding=ft.Padding.symmetric(vertical=10, horizontal=12),
                         bgcolor=COLOR_PRIMARY if is_active else COLOR_BG_LIGHT,
                         border_radius=8, ink=True, on_click=make_select_handler(curr_start)
                     )
@@ -198,7 +206,7 @@ def get_overtime_view(page: ft.Page, db, state, show_snack, open_dialog_safe):
                 chip = ft.Container(
                     content=ft.Text(m, color="white" if is_active else COLOR_TEXT_SUB, weight="bold", size=11),
                     bgcolor=COLOR_PRIMARY if is_active else COLOR_BG_LIGHT,
-                    padding=ft.padding.symmetric(horizontal=10, vertical=8),
+                    padding=ft.Padding.symmetric(horizontal=10, vertical=8),
                     border_radius=8,
                     ink=True,
                     on_click=set_mode
@@ -262,7 +270,7 @@ def get_overtime_view(page: ft.Page, db, state, show_snack, open_dialog_safe):
         content=date_label, 
         on_click=open_filter_dialog, 
         ink=True, 
-        padding=ft.padding.symmetric(horizontal=10, vertical=5), 
+        padding=ft.Padding.symmetric(horizontal=10, vertical=5), 
         border_radius=5, 
         tooltip="Click to Change View Filter"
     )
@@ -313,7 +321,7 @@ def get_overtime_view(page: ft.Page, db, state, show_snack, open_dialog_safe):
     rate_input = ft.TextField(
         value=rate_val, 
         label="Global Hourly Rate (PKR)", 
-        width=180, 
+        width=250, 
         border_radius=8, 
         content_padding=12, 
         border_color="#D1D5DB", 
@@ -334,82 +342,301 @@ def get_overtime_view(page: ft.Page, db, state, show_snack, open_dialog_safe):
     rate_input.on_submit = save_global_rate
     rate_input.on_blur = save_global_rate
 
-    # --- ADD OVERTIME MANUAL DIALOG ---
-    def open_add_ot_dialog(e, worker_id, w_name):
+
+    # --- DYNAMIC ADD OVERTIME MANUAL DIALOG ---
+    def open_add_ot_dialog(e=None, prefill_worker_id=None, prefill_worker_name=None):
         current_rate = float(db.get_setting("global_overtime_rate", "150"))
+        state_worker = {"id": prefill_worker_id, "name": prefill_worker_name}
         
-        hours_input = ft.TextField(label="Working Hours", value="1.0", keyboard_type=ft.KeyboardType.NUMBER, border_radius=8)
+        dlg = ft.AlertDialog(shape=ft.RoundedRectangleBorder(radius=12))
+        dialog_view = ft.Container(width=380)
+
+        # --- Form Elements ---
+        worker_icon = ft.Icon(ft.Icons.CHECK_CIRCLE if prefill_worker_id else ft.Icons.SEARCH, color="#10B981" if prefill_worker_id else "#6B7280")
+        worker_label = ft.Text(prefill_worker_name if prefill_worker_name else "Click to Search & Select Worker...", color="#065F46" if prefill_worker_id else "#6B7280", weight="bold" if prefill_worker_id else "normal")
+        
+        def show_picker(e):
+            show_picker_view(True)
+            
+        worker_selector = ft.Container(
+            content=ft.Row([worker_icon, worker_label]), 
+            on_click=show_picker, 
+            bgcolor="#D1FAE5" if prefill_worker_id else "#F9FAFB", 
+            border=ft.border.all(1, "#10B981" if prefill_worker_id else "#D1D5DB"), 
+            border_radius=8, padding=12, height=50, ink=True
+        )
+        
+        default_date = state["ot_view_date"].strftime("%Y-%m-%d") if state["ot_view_mode"] != "Date Range" else state["ot_end"].strftime("%Y-%m-%d")
+        date_input = ft.TextField(label="Date", value=default_date, prefix_icon=ft.Icons.CALENDAR_TODAY, border_radius=8, border_color="#D1D5DB", bgcolor="#F9FAFB")
+        
+        hours_input = ft.TextField(label="Working Hours", value="1.0", keyboard_type=ft.KeyboardType.NUMBER, border_radius=8, autofocus=True if prefill_worker_id else False)
         amount_input = ft.TextField(label="Calculated Amount (PKR)", value=str(int(current_rate)), border_color="blue", border_radius=8)
         
+        shift_dropdown = ft.Dropdown(
+            label="OT Shift Type", options=[ft.dropdown.Option("Morning"), ft.dropdown.Option("Evening")], value="Morning", border_radius=8
+        )
+        
         def on_hours_change(e):
-            try:
-                hrs = float(hours_input.value)
-                amount_input.value = str(int(hrs * current_rate))
-                page.update()
-            except ValueError:
-                pass
+            try: amount_input.value = str(int(float(hours_input.value) * current_rate)); page.update()
+            except ValueError: pass
                 
         hours_input.on_change = on_hours_change
         
-        def save_manual_ot(e):
+        def close_dialog(e):
+            dlg.open = False; page.update()
+            
+        def save_manual_ot(e=None):
+            if not state_worker["id"]:
+                show_snack(page, "Please search and select a worker first.", "red")
+                return
             try:
                 final_amt = float(amount_input.value)
                 final_hours = float(hours_input.value)
-                # Save it to the current selected view date (or today if range)
-                save_date = state["ot_view_date"].strftime("%Y-%m-%d") if state["ot_view_mode"] != "Date Range" else state["ot_end"].strftime("%Y-%m-%d")
-                
                 c = db.conn.cursor()
-                c.execute("INSERT INTO overtime_history (worker_id, date, amount, hours, status) VALUES (?, ?, ?, ?, 'Unpaid')", (worker_id, save_date, final_amt, final_hours))
+                c.execute("INSERT INTO overtime_history (worker_id, date, amount, hours, status, shift) VALUES (?, ?, ?, ?, 'Unpaid', ?)", (state_worker["id"], date_input.value, final_amt, final_hours, shift_dropdown.value))
                 db.conn.commit()
-                
                 dlg.open = False
                 page.update()
                 load_overtime_ui()
-                show_snack(page, f"Added {final_hours} hrs OT for {w_name}!", "green")
+                show_snack(page, f"Added {final_hours} hrs OT for {state_worker['name']}!", "green")
             except ValueError:
                 show_snack(page, "Invalid number entered.", "red")
 
+        date_input.on_submit = save_manual_ot
         amount_input.on_submit = save_manual_ot
         hours_input.on_submit = save_manual_ot
 
-        def close_dialog(e):
-            dlg.open = False
-            page.update()
+        def show_form_view(do_update=False):
+            dlg.title = ft.Row([ft.Icon(ft.Icons.MORE_TIME, color=COLOR_PRIMARY), ft.Text("Record Overtime", color=COLOR_PRIMARY, weight="bold")])
+            dialog_view.content = ft.Column([
+                worker_selector, ft.Divider(height=5, color="transparent"),
+                date_input, shift_dropdown, hours_input, amount_input,
+                ft.Text(f"Rate: {int(current_rate)} PKR/hr. You can edit the final amount directly.", color="grey", size=11),
+            ], tight=True)
+            dlg.actions = [ft.TextButton("Cancel", on_click=close_dialog), ft.ElevatedButton("Save Overtime", on_click=save_manual_ot, bgcolor="#0284C7", color="white")]
+            if do_update: page.update()
 
+        # --- Picker View ---
+        workers = db.get_workers()
+        search_input_picker = ft.TextField(label="Type Worker Name or ID...", autofocus=True, border_radius=8, height=50)
+        list_view = ft.ListView(spacing=0, height=300)
+        
+        def filter_list(e=None):
+            q = search_input_picker.value.lower() if search_input_picker.value else ""
+            list_view.controls.clear()
+            for w in workers:
+                w_id = w[0]; w_name = w[1]; w_type = w[6]
+                w_custom_id = w[8] if len(w) > 8 else w_id
+                display_id = f"W-{w_custom_id}" if w_type == "Weekly" else f"M-{w_custom_id}"
+                
+                if q in w_name.lower() or q in w_type.lower() or q in str(w_id) or q in display_id.lower():
+                    row = ft.Container(
+                        content=ft.Row([
+                            ft.Text(f"{display_id}  •  {w_name}", weight="bold", size=16, color="#111827"),
+                            ft.Container(content=ft.Text(w_type.upper(), size=10, weight="bold", color="#0284C7"), bgcolor="#E0F2FE", padding=ft.Padding.symmetric(horizontal=6, vertical=2), border_radius=4)
+                        ], alignment=ft.MainAxisAlignment.SPACE_BETWEEN),
+                        padding=15, bgcolor="white", border=ft.border.only(bottom=ft.border.BorderSide(1, "#E5E7EB")), ink=True, 
+                        on_click=lambda e, wid=w_id, wname=w_name: handle_select(wid, wname)
+                    )
+                    list_view.controls.append(row)
+            if e: page.update()
+
+        search_input_picker.on_change = filter_list
+
+        def handle_select(wid, wname):
+            state_worker["id"] = wid
+            state_worker["name"] = wname
+            worker_label.value = wname
+            worker_label.color = "#065F46"
+            worker_label.weight = "bold"
+            worker_selector.bgcolor = "#D1FAE5"
+            worker_selector.border = ft.border.all(1, "#10B981")
+            worker_icon.name = ft.Icons.CHECK_CIRCLE
+            worker_icon.color = "#10B981"
+            show_form_view(True)
+
+        def show_picker_view(do_update=False):
+            filter_list()
+            dlg.title = ft.Text("🔍 Search & Select Worker", weight="bold", size=18)
+            dialog_view.content = ft.Column([search_input_picker, ft.Divider(height=10, color="transparent"), list_view], tight=True)
+            dlg.actions = [ft.TextButton("Back to Form", on_click=lambda e: show_form_view(True))]
+            if do_update: page.update()
+
+        show_form_view()
+        dlg.content = dialog_view
+        open_dialog_safe(page, dlg)
+
+
+    # --- SHARED TABLE BUILDER FOR PROFESSIONAL DIALOGS ---
+    def build_detail_table(rows):
+        list_items = [
+            ft.Container(
+                content=ft.Row([
+                    ft.Text("Date", width=90, weight="bold", size=12, color=COLOR_TEXT_SUB),
+                    ft.Text("Shift/Type", width=90, weight="bold", size=12, color=COLOR_TEXT_SUB),
+                    ft.Text("Hours", width=60, weight="bold", size=12, color=COLOR_TEXT_SUB),
+                    ft.Text("Amount", weight="bold", size=12, color=COLOR_TEXT_SUB, text_align=ft.TextAlign.RIGHT, expand=True)
+                ]),
+                padding=ft.Padding.only(bottom=10, left=10, right=10),
+                border=ft.border.only(bottom=ft.border.BorderSide(2, COLOR_BORDER))
+            )
+        ]
+        
+        total_amt = 0
+        for r in rows:
+            date_str = r[0]
+            hrs = float(r[1])
+            amt = float(r[2])
+            shift = r[3] if len(r) > 3 and r[3] else "--"
+            
+            total_amt += amt
+            
+            if shift == "Payment" or hrs == 0:
+                shift_disp = "Payment"
+                hrs_disp = "--"
+            else:
+                shift_disp = shift
+                hrs_disp = f"{hrs:g} h"
+
+            amt_color = "#10B981" if amt >= 0 else "#EF4444"
+            prefix = "+" if amt > 0 else ""
+            
+            list_items.append(
+                ft.Container(
+                    content=ft.Row([
+                        ft.Text(date_str, width=90, size=13),
+                        ft.Text(shift_disp, width=90, size=12, color="grey"),
+                        ft.Text(hrs_disp, width=60, size=13),
+                        ft.Text(f"{prefix}{int(amt)} PKR", weight="bold", color=amt_color, size=13, text_align=ft.TextAlign.RIGHT, expand=True)
+                    ]),
+                    padding=10, border=ft.border.only(bottom=ft.border.BorderSide(1, COLOR_BORDER))
+                )
+            )
+        
+        if len(list_items) == 1:
+            list_items.append(ft.Container(content=ft.Text("No records found.", italic=True, color="grey"), padding=10))
+        else:
+            list_items.append(
+                ft.Container(
+                    content=ft.Row([
+                        ft.Text("Total", weight="bold", size=14), 
+                        ft.Text(f"{int(total_amt)} PKR", weight="bold", color="#10B981" if total_amt >= 0 else "#EF4444", size=14)
+                    ], alignment=ft.MainAxisAlignment.SPACE_BETWEEN), 
+                    padding=10, bgcolor="#F9FAFB"
+                )
+            )
+        return list_items
+
+    # --- MONEY DETAILS DIALOGS ---
+    def open_unpaid_ot_dialog(e, w_id, w_name, start_date, end_date):
+        c = db.conn.cursor()
+        c.execute("SELECT date, hours, amount, shift FROM overtime_history WHERE worker_id=? AND date BETWEEN ? AND ? AND (status='Unpaid' OR status IS NULL) ORDER BY date", (w_id, start_date, end_date))
+        rows = c.fetchall()
+        list_items = build_detail_table(rows)
+            
         dlg = ft.AlertDialog(
-            title=ft.Text(f"Add Overtime: {w_name}", weight="bold"),
-            content=ft.Container(
-                content=ft.Column([
-                    ft.Text(f"Rate: {int(current_rate)} PKR/hr. You can edit the final amount directly.", color="grey", size=12),
-                    ft.Divider(height=10, color="transparent"),
-                    hours_input,
-                    amount_input,
-                ], tight=True), width=350
-            ),
-            actions=[
-                ft.TextButton("Cancel", on_click=close_dialog), 
-                ft.ElevatedButton("Save Overtime", on_click=save_manual_ot, bgcolor="#0284C7", color="white")
-            ]
+            title=ft.Text(f"Unpaid OT Details: {w_name}", weight="bold", size=16),
+            content=ft.Container(content=ft.Column(list_items, scroll=ft.ScrollMode.AUTO, tight=True), width=450),
+            actions=[ft.TextButton("Close", on_click=lambda e: setattr(dlg, 'open', False) or page.update())]
+        )
+        open_dialog_safe(page, dlg)
+        
+    def open_paid_ot_dialog(e, w_id, w_name, start_date, end_date):
+        c = db.conn.cursor()
+        c.execute("SELECT date, hours, amount, shift FROM overtime_history WHERE worker_id=? AND date BETWEEN ? AND ? AND status='Paid' ORDER BY date", (w_id, start_date, end_date))
+        rows = c.fetchall()
+        list_items = build_detail_table(rows)
+            
+        dlg = ft.AlertDialog(
+            title=ft.Text(f"Paid OT Details: {w_name}", weight="bold", size=16),
+            content=ft.Container(content=ft.Column(list_items, scroll=ft.ScrollMode.AUTO, tight=True), width=450),
+            actions=[ft.TextButton("Close", on_click=lambda e: setattr(dlg, 'open', False) or page.update())]
+        )
+        open_dialog_safe(page, dlg)
+
+    # --- HOURS DETAILS DIALOG ---
+    def open_hours_detail_dialog(e, w_id, w_name, start_date, end_date):
+        c = db.conn.cursor()
+        c.execute("SELECT date, shift, SUM(hours) FROM overtime_history WHERE worker_id=? AND date BETWEEN ? AND ? AND hours > 0 GROUP BY date, shift ORDER BY date", (w_id, start_date, end_date))
+        rows = c.fetchall()
+        
+        list_items = [
+            ft.Container(
+                content=ft.Row([
+                    ft.Text("Date", width=100, weight="bold", size=12, color=COLOR_TEXT_SUB),
+                    ft.Text("Shift", width=100, weight="bold", size=12, color=COLOR_TEXT_SUB),
+                    ft.Text("Hours", weight="bold", size=12, color=COLOR_TEXT_SUB, text_align=ft.TextAlign.RIGHT, expand=True)
+                ]),
+                padding=ft.Padding.only(bottom=10, left=10, right=10),
+                border=ft.border.only(bottom=ft.border.BorderSide(2, COLOR_BORDER))
+            )
+        ]
+        
+        total_hrs = 0
+        for r in rows:
+            date_str = r[0]
+            shift_val = r[1] if r[1] else "Morning"
+            hrs = float(r[2])
+            total_hrs += hrs
+            
+            list_items.append(
+                ft.Container(
+                    content=ft.Row([
+                        ft.Text(date_str, width=100, size=13, weight="w600", color=COLOR_TEXT_MAIN),
+                        ft.Text(shift_val, width=100, size=13, color=COLOR_TEXT_SUB),
+                        ft.Text(f"{hrs:g} h", weight="bold", color=COLOR_PRIMARY, size=13, text_align=ft.TextAlign.RIGHT, expand=True)
+                    ]),
+                    padding=10, border=ft.border.only(bottom=ft.border.BorderSide(1, COLOR_BORDER))
+                )
+            )
+            
+        if len(list_items) == 1:
+            list_items.append(ft.Container(content=ft.Text("No overtime hours found.", italic=True, color="grey"), padding=10))
+        else:
+            list_items.append(
+                ft.Container(
+                    content=ft.Row([
+                        ft.Text("Total Hours", weight="bold", size=14), 
+                        ft.Text(f"{total_hrs:g} h", weight="bold", color=COLOR_PRIMARY, size=14)
+                    ], alignment=ft.MainAxisAlignment.SPACE_BETWEEN), 
+                    padding=10, bgcolor="#F9FAFB"
+                )
+            )
+            
+        dlg = ft.AlertDialog(
+            title=ft.Text(f"Overtime Hours: {w_name}", weight="bold", size=16),
+            content=ft.Container(content=ft.Column(list_items, scroll=ft.ScrollMode.AUTO, tight=True), width=400),
+            actions=[ft.TextButton("Close", on_click=lambda e: setattr(dlg, 'open', False) or page.update())]
         )
         open_dialog_safe(page, dlg)
 
     # --- PAY OVERTIME DIALOG ---
     def open_pay_ot_dialog(e, worker_id, w_name, total_unpaid, start_sql, end_sql):
-        pay_amount_input = ft.TextField(label="Amount to Pay (PKR)", value=str(int(total_unpaid)), border_color="green", border_radius=8, autofocus=True)
+        pay_amount_input = ft.TextField(
+            label="Amount to Pay (PKR)", 
+            value=str(int(total_unpaid)), 
+            border_color="green", 
+            border_radius=8, 
+            autofocus=True
+        )
         
-        def process_payment(e):
+        try:
+            pay_amount_input.selection = ft.TextSelection(0, len(str(int(total_unpaid))))
+        except AttributeError:
+            pass
+        
+        def process_payment(e=None):
             try:
                 actual_paid = float(pay_amount_input.value)
-                diff = total_unpaid - actual_paid
+                today_str = datetime.now().strftime("%Y-%m-%d")
                 
                 c = db.conn.cursor()
-                # Mark existing as paid
-                c.execute("UPDATE overtime_history SET status='Paid' WHERE worker_id=? AND date BETWEEN ? AND ? AND (status='Unpaid' OR status IS NULL)", (worker_id, start_sql, end_sql))
                 
-                # If they didn't pay exactly the total unpaid, save the remaining as carry forward
-                if diff != 0:
-                    today_str = datetime.now().strftime("%Y-%m-%d")
-                    c.execute("INSERT INTO overtime_history (worker_id, date, amount, hours, status) VALUES (?, ?, ?, 0, 'Unpaid')", (worker_id, today_str, diff))
+                # Insert a single negative Unpaid record (Payment) to deduct from unpaid balance
+                c.execute("INSERT INTO overtime_history (worker_id, date, amount, hours, status, shift) VALUES (?, ?, ?, 0, 'Unpaid', 'Payment')", (worker_id, today_str, -actual_paid))
+                
+                # Insert a single positive Paid record to increase the paid balance
+                c.execute("INSERT INTO overtime_history (worker_id, date, amount, hours, status, shift) VALUES (?, ?, ?, 0, 'Paid', 'Payment')", (worker_id, today_str, actual_paid))
                 
                 db.conn.commit()
                 
@@ -432,7 +659,7 @@ def get_overtime_view(page: ft.Page, db, state, show_snack, open_dialog_safe):
             content=ft.Container(
                 content=ft.Column([
                     ft.Text(f"Total Unpaid in period: {int(total_unpaid)} PKR", weight="bold"),
-                    ft.Text("Any unpaid difference will be carried forward automatically.", color="grey", size=12),
+                    ft.Text("Payments are recorded as deductions from the unpaid balance.", color="grey", size=12),
                     ft.Divider(height=10, color="transparent"),
                     pay_amount_input,
                 ], tight=True), width=350
@@ -492,13 +719,21 @@ def get_overtime_view(page: ft.Page, db, state, show_snack, open_dialog_safe):
         
         c = db.conn.cursor()
         
-        # Fetch Unpaid (Amounts and Hours)
         c.execute("SELECT worker_id, SUM(amount), SUM(hours) FROM overtime_history WHERE date BETWEEN ? AND ? AND (status='Unpaid' OR status IS NULL) GROUP BY worker_id", (start_sql, end_sql))
         unpaid_data = {row[0]: (row[1] or 0.0, row[2] or 0.0) for row in c.fetchall()}
         
-        # Fetch Paid (Amounts and Hours)
         c.execute("SELECT worker_id, SUM(amount), SUM(hours) FROM overtime_history WHERE date BETWEEN ? AND ? AND status='Paid' GROUP BY worker_id", (start_sql, end_sql))
         paid_data = {row[0]: (row[1] or 0.0, row[2] or 0.0) for row in c.fetchall()}
+        
+        c.execute("SELECT worker_id, shift FROM overtime_history WHERE date BETWEEN ? AND ? AND hours > 0", (start_sql, end_sql))
+        shift_data = {}
+        for row in c.fetchall():
+            wid = row[0]
+            shift = row[1] if row[1] else "Morning"
+            if wid not in shift_data:
+                shift_data[wid] = set()
+            if shift != "--":
+                shift_data[wid].add(shift)
         
         for w in workers:
             w_id = w[0]
@@ -507,7 +742,6 @@ def get_overtime_view(page: ft.Page, db, state, show_snack, open_dialog_safe):
             w_custom_id = w[8]
             display_id = f"W-{w_custom_id}" if w_type == "Weekly" else f"M-{w_custom_id}"
             
-            # Base text search condition
             matches_search = True
             if query and query not in w_name.lower() and query not in display_id.lower():
                 matches_search = False
@@ -516,38 +750,59 @@ def get_overtime_view(page: ft.Page, db, state, show_snack, open_dialog_safe):
             paid_amt, paid_hrs = paid_data.get(w_id, (0.0, 0.0))
             total_hrs = unpaid_hrs + paid_hrs
             
-            # Accumulate totals ONLY if they match the search query (ignoring box filter)
+            # Identify if worker has any records in this period to keep the list clean
+            is_participating = (unpaid_amt != 0 or paid_amt != 0 or total_hrs > 0)
+            
             if matches_search:
-                total_unpaid_period += unpaid_amt
-                total_paid_period += paid_amt
-                
-                if unpaid_amt > 0 or paid_amt > 0 or total_hrs > 0:
+                if is_participating:
+                    total_unpaid_period += unpaid_amt
+                    total_paid_period += paid_amt
                     participating_count += 1
             
-            # Now enforce BOTH the search filter and the card click filter for the list
             if not matches_search:
                 continue
                 
-            if filter_state["mode"] == "Participating" and (unpaid_amt == 0 and paid_amt == 0 and total_hrs == 0):
+            # Filter out workers who have no overtime in this period
+            if not is_participating:
                 continue
+                
             if filter_state["mode"] == "Unpaid" and unpaid_amt == 0:
                 continue
             if filter_state["mode"] == "Paid" and paid_amt == 0:
                 continue
 
-            unpaid_ui = ft.Text(f"{int(unpaid_amt):,} PKR", width=110, weight="bold", color="#F59E0B" if unpaid_amt > 0 else "grey", size=14)
-            paid_ui = ft.Text(f"{int(paid_amt):,} PKR", width=110, weight="bold", color="#10B981" if paid_amt > 0 else "grey", size=14)
-            hrs_ui = ft.Text(f"{total_hrs:g} h", width=70, weight="bold", color=COLOR_TEXT_MAIN, size=13)
+            worker_shifts = shift_data.get(w_id, set())
+            if "Morning" in worker_shifts and "Evening" in worker_shifts:
+                shift_val = "Morning + Evening"
+            elif "Morning" in worker_shifts:
+                shift_val = "Morning"
+            elif "Evening" in worker_shifts:
+                shift_val = "Evening"
+            else:
+                shift_val = "--"
+
+            unpaid_ui = ft.Text(f"{int(unpaid_amt):,} PKR", weight="bold", color="#F59E0B" if unpaid_amt > 0 else "grey", size=14)
+            paid_ui = ft.Text(f"{int(paid_amt):,} PKR", weight="bold", color="#10B981" if paid_amt > 0 else "grey", size=14)
+            shift_ui = ft.Text(shift_val, width=120, color=COLOR_TEXT_SUB, size=13)
             
-            # Use dynamic sizing with nice padding to prevent text squishing
+            hrs_container = ft.Container(
+                content=ft.Text(f"{total_hrs:g} h", weight="bold", color=COLOR_PRIMARY, size=13),
+                ink=True,
+                on_click=lambda e, wid=w_id, wn=w_name: open_hours_detail_dialog(e, wid, wn, start_sql, end_sql),
+                tooltip="Click to view dates and shifts",
+                width=60,
+                padding=ft.Padding.symmetric(horizontal=4, vertical=4),
+                border_radius=4,
+            )
+            
             add_btn = ft.ElevatedButton(
                 "Add OT", 
                 icon=ft.Icons.ADD, 
                 bgcolor="#0284C7", 
                 color="white", 
                 height=35, 
-                style=ft.ButtonStyle(padding=ft.padding.symmetric(horizontal=16, vertical=0)),
-                on_click=lambda e, wid=w_id, wn=w_name: open_add_ot_dialog(e, wid, wn)
+                style=ft.ButtonStyle(padding=ft.Padding.symmetric(horizontal=10, vertical=0)),
+                on_click=lambda e, wid=w_id, wn=w_name: open_add_ot_dialog(e, prefill_worker_id=wid, prefill_worker_name=wn)
             )
             
             pay_btn = ft.ElevatedButton(
@@ -557,11 +812,19 @@ def get_overtime_view(page: ft.Page, db, state, show_snack, open_dialog_safe):
                 color="white" if unpaid_amt > 0 else "grey", 
                 height=35, 
                 disabled=(unpaid_amt <= 0), 
-                style=ft.ButtonStyle(padding=ft.padding.symmetric(horizontal=16, vertical=0)),
+                style=ft.ButtonStyle(padding=ft.Padding.symmetric(horizontal=10, vertical=0)),
                 on_click=lambda e, wid=w_id, wn=w_name, unp=unpaid_amt: open_pay_ot_dialog(e, wid, wn, unp, start_sql, end_sql)
             )
 
-            action_row = ft.Row([add_btn, pay_btn], spacing=8, alignment=ft.MainAxisAlignment.END, width=250)
+            action_row = ft.Row([add_btn, pay_btn], spacing=5, alignment=ft.MainAxisAlignment.END, width=210)
+
+            unpaid_container = ft.Container(
+                content=unpaid_ui, width=90, ink=True, on_click=lambda e, wid=w_id, wn=w_name: open_unpaid_ot_dialog(e, wid, wn, start_sql, end_sql), tooltip="View Unpaid Details"
+            )
+            
+            paid_container = ft.Container(
+                content=paid_ui, width=90, ink=True, on_click=lambda e, wid=w_id, wn=w_name: open_paid_ot_dialog(e, wid, wn, start_sql, end_sql) if paid_amt > 0 else None, tooltip="View Paid Details" if paid_amt > 0 else None
+            )
 
             def make_hover(idx):
                 def hover(e):
@@ -572,16 +835,16 @@ def get_overtime_view(page: ft.Page, db, state, show_snack, open_dialog_safe):
             new_list_controls.append(
                 ft.Container(
                     content=ft.Row([
-                        ft.Text(display_id, width=60, weight="w600", color=COLOR_TEXT_MAIN, size=13),
-                        ft.Text(w_name, width=170, weight="bold", color=COLOR_TEXT_MAIN, size=15),
-                        ft.Text(w_type, width=80, color=COLOR_TEXT_SUB, size=13),
-                        hrs_ui,
-                        unpaid_ui,
-                        paid_ui,
-                        ft.Container(expand=True), 
+                        ft.Text(display_id, width=50, weight="w600", color=COLOR_TEXT_MAIN, size=13),
+                        ft.Text(w_name, expand=True, weight="bold", color=COLOR_TEXT_MAIN, size=15),
+                        ft.Text(w_type, width=60, color=COLOR_TEXT_SUB, size=13),
+                        shift_ui,
+                        hrs_container,
+                        unpaid_container,
+                        paid_container,
                         action_row
                     ], vertical_alignment=ft.CrossAxisAlignment.CENTER),
-                    padding=ft.padding.symmetric(vertical=8, horizontal=15), 
+                    padding=ft.Padding.symmetric(vertical=8, horizontal=15), 
                     bgcolor="white" if visible_index % 2 == 0 else "#FAFAFA", 
                     border=ft.border.only(bottom=ft.border.BorderSide(1, COLOR_BORDER)),
                     on_hover=make_hover(visible_index)
@@ -595,24 +858,33 @@ def get_overtime_view(page: ft.Page, db, state, show_snack, open_dialog_safe):
             create_stat_card("Paid Overtime", f"{int(total_paid_period):,} PKR", ft.Icons.CHECK_CIRCLE, "#10B981", lambda e: set_filter("Paid"), filter_state["mode"] == "Paid")
         ], spacing=15)
         
-        # We append the header *after* so we don't clear it
         final_ui_controls = []
         final_ui_controls.append(
             ft.Container(
                 content=ft.Row([
-                    ft.Text("ID", width=60, weight="bold", color=COLOR_TEXT_SUB, size=13),
-                    ft.Text("Name", width=170, weight="bold", color=COLOR_TEXT_SUB, size=13),
-                    ft.Text("Type", width=80, weight="bold", color=COLOR_TEXT_SUB, size=13),
-                    ft.Text("Hours", width=70, weight="bold", color=COLOR_PRIMARY, size=13),
-                    ft.Text("Unpaid OT", width=110, weight="bold", color="#F59E0B", size=13),
-                    ft.Text("Paid OT", width=110, weight="bold", color="#10B981", size=13),
-                    ft.Container(expand=True),
-                    ft.Text("Action", width=250, weight="bold", color=COLOR_TEXT_SUB, size=13, text_align=ft.TextAlign.CENTER),
+                    ft.Text("ID", width=50, weight="bold", color=COLOR_TEXT_SUB, size=13),
+                    ft.Text("Name", expand=True, weight="bold", color=COLOR_TEXT_SUB, size=13),
+                    ft.Text("Type", width=60, weight="bold", color=COLOR_TEXT_SUB, size=13),
+                    ft.Text("Shift", width=120, weight="bold", color=COLOR_TEXT_SUB, size=13),
+                    ft.Text("Hours", width=60, weight="bold", color=COLOR_PRIMARY, size=13),
+                    ft.Text("Unpaid OT", width=90, weight="bold", color="#F59E0B", size=13),
+                    ft.Text("Paid OT", width=90, weight="bold", color="#10B981", size=13),
+                    ft.Text("Action", width=210, weight="bold", color=COLOR_TEXT_SUB, size=13, text_align=ft.TextAlign.CENTER),
                 ]),
-                bgcolor=COLOR_BG_LIGHT, padding=ft.padding.symmetric(vertical=10, horizontal=15), border=ft.border.only(bottom=ft.border.BorderSide(2, COLOR_BORDER))
+                bgcolor=COLOR_BG_LIGHT, padding=ft.Padding.symmetric(vertical=10, horizontal=15), border=ft.border.only(bottom=ft.border.BorderSide(2, COLOR_BORDER))
             )
         )
-        final_ui_controls.extend(new_list_controls)
+        
+        if len(new_list_controls) == 0:
+            final_ui_controls.append(
+                ft.Container(
+                    content=ft.Text("No overtime recorded for this period. Use '+ Add Overtime' to begin.", color="grey", italic=True),
+                    padding=30,
+                    alignment=ft.Alignment(0, 0)
+                )
+            )
+        else:
+            final_ui_controls.extend(new_list_controls)
         
         ot_grid.controls = final_ui_controls
         
@@ -624,21 +896,37 @@ def get_overtime_view(page: ft.Page, db, state, show_snack, open_dialog_safe):
 
         page.update()
 
+    global_add_btn = ft.ElevatedButton(
+        "Add Overtime", 
+        icon=ft.Icons.ADD, 
+        bgcolor=COLOR_PRIMARY, 
+        color="white", 
+        height=40,
+        on_click=open_add_ot_dialog
+    )
+
+    top_row_1 = ft.Row([
+        ft.Text("Overtime Management", size=22, weight="bold", color=COLOR_TEXT_MAIN),
+        ft.Row([
+            ft.IconButton(icon=ft.Icons.CHEVRON_LEFT, on_click=lambda e: change_period(-1)),
+            period_clickable,
+            ft.IconButton(icon=ft.Icons.CHEVRON_RIGHT, on_click=lambda e: change_period(1)),
+        ], alignment=ft.MainAxisAlignment.CENTER),
+        ft.Row([
+            search_input, 
+            global_add_btn,
+            ft.FilledButton("Today", icon=ft.Icons.TODAY, on_click=reset_to_today, bgcolor="#111827")
+        ], spacing=10)
+    ], alignment=ft.MainAxisAlignment.SPACE_BETWEEN)
+
+    top_row_2 = ft.Row([
+        rate_input
+    ], alignment=ft.MainAxisAlignment.START)
+
     main_view = ft.Container(
         content=ft.Column([
-            ft.Row([
-                ft.Text("Manual Overtime Management", size=22, weight="bold", color=COLOR_TEXT_MAIN),
-                ft.Row([
-                    ft.IconButton(icon=ft.Icons.CHEVRON_LEFT, on_click=lambda e: change_period(-1)),
-                    period_clickable,
-                    ft.IconButton(icon=ft.Icons.CHEVRON_RIGHT, on_click=lambda e: change_period(1)),
-                ], alignment=ft.MainAxisAlignment.CENTER),
-                ft.Row([
-                    rate_input, 
-                    search_input, 
-                    ft.FilledButton("Today", icon=ft.Icons.TODAY, on_click=reset_to_today, bgcolor="#0284C7")
-                ], spacing=10)
-            ], alignment=ft.MainAxisAlignment.SPACE_BETWEEN),
+            top_row_1,
+            top_row_2,
             ft.Divider(height=5, color="transparent"),
             stats_container,
             ft.Divider(height=5, color="transparent"),

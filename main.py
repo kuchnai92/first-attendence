@@ -260,7 +260,9 @@ db = Database()
 def main(page: ft.Page):
     page.title = "Worker Salary Manager"
     page.theme_mode = ft.ThemeMode.LIGHT
-    page.bgcolor = "#F9FAFB" 
+    page.bgcolor = "#F3F4F6" 
+    page.padding = 0  
+    page.spacing = 0
     page.window_width = 1300
     page.window_height = 850
     
@@ -268,9 +270,6 @@ def main(page: ft.Page):
     page.fonts = {
         "JameelNoori": "Jameel Noori.ttf"
     }
-    
-    COLOR_PRIMARY = "#0284C7"
-    COLOR_WHITE = "#ffffff"
     
     def show_snack(page_obj, text, color):
         snack = ft.SnackBar(ft.Text(text), bgcolor=color)
@@ -293,7 +292,7 @@ def main(page: ft.Page):
         "records_view_date": datetime.now(),
         "advances_view_date": datetime.now(),
         "overtime_view_date": datetime.now(),
-        "lang": "en" # NEW LANGUAGE STATE
+        "lang": "en" 
     }
 
     # --- TRANSLATION DICTIONARY FOR MAIN MENU ---
@@ -305,6 +304,7 @@ def main(page: ft.Page):
         "Monthly": {"en": "Monthly", "ur": "ماہانہ"},
         "Advances": {"en": "Advances", "ur": "ایڈوانس"},
         "Records": {"en": "Records", "ur": "ریکارڈز"},
+        "Settings": {"en": "Settings", "ur": "ترتیبات"},
         "FactoryManager": {"en": "FactoryManager", "ur": "فیکٹری مینیجر"}
     }
 
@@ -349,39 +349,57 @@ def main(page: ft.Page):
     for i in range(8):
         views_map[i].visible = True 
 
-    main_content_area = ft.Container(content=workers_view, expand=True, padding=15)
+    main_content_area = ft.Container(content=workers_view, expand=True, padding=20)
 
-    # --- PROFESSIONAL DASHBOARD NAVIGATION ---
+    # --- SIDEBAR NAVIGATION ---
     nav_keys = [
-        ("Workers", ft.Icons.PEOPLE), ("Attendance", ft.Icons.HOW_TO_REG), 
-        ("Overtime", ft.Icons.MORE_TIME), ("Weekly", ft.Icons.VIEW_WEEK), 
-        ("Monthly", ft.Icons.CALENDAR_MONTH), ("Advances", ft.Icons.ACCOUNT_BALANCE_WALLET), 
-        ("Records", ft.Icons.RECEIPT_LONG)
+        ("Workers", ft.Icons.PEOPLE), 
+        ("Attendance", ft.Icons.HOW_TO_REG), 
+        ("Overtime", ft.Icons.MORE_TIME), 
+        ("Weekly", ft.Icons.VIEW_WEEK), 
+        ("Monthly", ft.Icons.CALENDAR_MONTH), 
+        ("Advances", ft.Icons.ACCOUNT_BALANCE_WALLET), 
+        ("Records", ft.Icons.RECEIPT_LONG),
+        ("Settings", ft.Icons.SETTINGS)
     ]
 
-    def create_nav_item(key, icon, index):
+    sidebar_menu = ft.Column(spacing=4, expand=True)
+
+    def create_sidebar_item(key, icon, index):
         is_active = state["current_nav_index"] == index
-        bg = "#E0F2FE" if is_active else "transparent"
-        color = "#0284C7" if is_active else "#6B7280"
-        display_text = _(key)
+        bg_color = "#F3F4F6" if is_active else "transparent"
+        text_color = "#0284C7" if is_active else "#6B7280"
+        font_weight = "bold" if is_active else "w500"
+        
+        accent_bar = ft.Container(
+            width=4, 
+            height=24, 
+            bgcolor="#0284C7" if is_active else "transparent", 
+            border_radius=ft.border_radius.all(4)
+        )
+
         return ft.Container(
-            content=ft.Row([ft.Icon(icon, size=18, color=color), ft.Text(display_text, weight="bold", size=14, color=color, font_family=get_font())], spacing=6),
-            padding=ft.padding.symmetric(horizontal=16, vertical=10),
-            bgcolor=bg, border_radius=8, ink=True,
+            content=ft.Row([
+                accent_bar,
+                ft.Icon(icon, size=20, color=text_color), 
+                ft.Text(_(key), weight=font_weight, size=14, color=text_color, font_family=get_font())
+            ], spacing=12),
+            padding=ft.Padding.symmetric(horizontal=12, vertical=12),
+            bgcolor=bg_color, 
+            border_radius=8, 
+            ink=True,
             on_click=lambda e, i=index: switch_view(i)
         )
 
-    nav_bar_row = ft.Row(alignment=ft.MainAxisAlignment.CENTER, spacing=5)
-
-    def render_nav_bar():
-        nav_bar_row.controls.clear()
+    def render_sidebar():
+        sidebar_menu.controls.clear()
         for idx, (key, icn) in enumerate(nav_keys):
-            nav_bar_row.controls.append(create_nav_item(key, icn, idx))
+            sidebar_menu.controls.append(create_sidebar_item(key, icn, idx))
         page.update()
 
     def switch_view(index):
         state["current_nav_index"] = index
-        render_nav_bar()
+        render_sidebar()
 
         main_content_area.content = views_map.get(index)
         
@@ -396,56 +414,71 @@ def main(page: ft.Page):
         
         page.update()
 
-    # --- TOP HEADER UI ---
-    app_title = ft.Text(_("FactoryManager"), weight="bold", size=20, color="#111827", width=160, font_family=get_font())
+    # --- SIDEBAR HEADER / PROFILE ---
+    app_title = ft.Text(_("FactoryManager"), weight="bold", size=20, color="#111827", font_family=get_font())
+    
+    profile_section = ft.Container(
+        content=ft.Row([
+            ft.CircleAvatar(
+                content=ft.Icon(ft.Icons.PERSON, color="#0284C7"), 
+                bgcolor="#E0F2FE", 
+                radius=20
+            ),
+            ft.Column([
+                ft.Text("Hello 👋", size=11, color="#6B7280"),
+                ft.Text("Administrator", weight="bold", size=14, color="#111827")
+            ], spacing=2)
+        ], alignment=ft.MainAxisAlignment.START),
+        padding=ft.Padding.only(top=10, bottom=20, left=10)
+    )
 
-    # Fix: Wrapping text in ft.Text object inside content parameter
+    # --- SIDEBAR FOOTER (LANG TOGGLE) ---
     lang_btn = ft.TextButton(
-        content=ft.Text("اردو", font_family="JameelNoori", color="#0284C7"), 
+        content=ft.Row([
+            ft.Icon(ft.Icons.LANGUAGE, size=16, color="#6B7280"),
+            ft.Text("اردو", font_family="JameelNoori", color="#6B7280", weight="bold")
+        ]), 
         on_click=lambda e: toggle_language(e)
     )
 
     def toggle_language(e):
         state["lang"] = "ur" if state["lang"] == "en" else "en"
         
-        # Update Button visually
-        lang_btn.content.value = "English" if state["lang"] == "ur" else "اردو"
-        lang_btn.content.font_family = get_font()
+        lang_btn.content.controls[1].value = "English" if state["lang"] == "ur" else "اردو"
+        lang_btn.content.controls[1].font_family = get_font()
         
-        # Update Title & Nav
         app_title.value = _("FactoryManager")
         app_title.font_family = get_font()
-        render_nav_bar()
+        render_sidebar()
         
-        # Reload Current View to refresh any translated tab text
         switch_view(state["current_nav_index"])
 
-    settings_btn = ft.IconButton(icon=ft.Icons.SETTINGS, icon_size=24, icon_color="#6B7280", tooltip="Settings", on_click=lambda e: switch_view(7))
-    
-    header_actions = ft.Row([lang_btn, settings_btn], spacing=5)
-
-    header_row = ft.Row(
-        controls=[
-            app_title, 
-            ft.Container(content=nav_bar_row, expand=True, alignment=ft.Alignment(0, 0)), 
-            header_actions
-        ],
-        alignment=ft.MainAxisAlignment.SPACE_BETWEEN,
-        vertical_alignment=ft.CrossAxisAlignment.CENTER
+    sidebar_container = ft.Container(
+        content=ft.Column([
+            ft.Container(content=app_title, padding=ft.Padding.only(left=10, top=10, bottom=10)),
+            profile_section,
+            ft.Container(content=ft.Text("MAIN MENU", size=11, weight="bold", color="#9CA3AF"), padding=ft.Padding.only(left=15, bottom=5)),
+            sidebar_menu,
+            ft.Divider(height=1, color="#E5E7EB"),
+            ft.Row([lang_btn], alignment=ft.MainAxisAlignment.CENTER)
+        ]),
+        width=260,
+        bgcolor="#FFFFFF",
+        border=ft.border.only(right=ft.border.BorderSide(1, "#E5E7EB")),
+        padding=ft.Padding.symmetric(vertical=15, horizontal=15),
+        shadow=ft.BoxShadow(spread_radius=1, blur_radius=5, color="#0D000000", offset=ft.Offset(2, 0))
     )
 
-    render_nav_bar()
+    render_sidebar()
 
     page.add(
-        ft.Container(
-            content=header_row, 
-            padding=ft.padding.symmetric(horizontal=20, vertical=10), 
-            bgcolor="white", 
-            shadow=ft.BoxShadow(spread_radius=1, blur_radius=5, color="#1A000000", offset=ft.Offset(0, 1))
-        ), 
-        main_content_area
+        ft.Row([
+            sidebar_container,
+            main_content_area
+        ], expand=True, spacing=0)
     )
+    
     load_workers_ui()
 
 if __name__ == "__main__":
-    ft.app(main, assets_dir="assets")
+    ft.run(main, assets_dir="assets")

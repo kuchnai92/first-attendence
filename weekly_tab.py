@@ -1,5 +1,7 @@
 import flet as ft
 from datetime import datetime, timedelta
+# Import our new professional export module
+from exports import export_weekly_summary_to_excel
 
 def get_weekly_view(page: ft.Page, db, state, show_snack):
     COLOR_TEXT_MAIN = "#111827"
@@ -51,7 +53,7 @@ def get_weekly_view(page: ft.Page, db, state, show_snack):
                         ft.Icon(ft.Icons.DATE_RANGE, color="white" if is_active else COLOR_PRIMARY, size=18), 
                         ft.Text(f"Week {week_num}: {curr_start.strftime('%d %b')} to {curr_end.strftime('%d %b %Y')}", weight="bold", color="white" if is_active else COLOR_TEXT_MAIN, size=14)
                     ]), 
-                    padding=ft.padding.symmetric(vertical=12, horizontal=15), 
+                    padding=ft.Padding.symmetric(vertical=12, horizontal=15), 
                     bgcolor=COLOR_PRIMARY if is_active else COLOR_BG_LIGHT, 
                     border_radius=8, 
                     ink=True, 
@@ -129,7 +131,7 @@ def get_weekly_view(page: ft.Page, db, state, show_snack):
         content=week_label, 
         on_click=open_week_picker_dialog, 
         ink=True, 
-        padding=ft.padding.symmetric(horizontal=10, vertical=5), 
+        padding=ft.Padding.symmetric(horizontal=10, vertical=5), 
         border_radius=5, 
         tooltip="Click to Select Week"
     )
@@ -162,7 +164,6 @@ def get_weekly_view(page: ft.Page, db, state, show_snack):
         on_change=lambda e: load_weekly_tab()
     )
 
-    # MEMORY OPTIMIZED ABSENT CALCULATION
     def calculate_absents_mem(worker_id, all_att):
         att_data = all_att.get(worker_id, [])
         absent_dates = [row[0] for row in att_data if row[2] == "Absent"]
@@ -171,7 +172,6 @@ def get_weekly_view(page: ft.Page, db, state, show_snack):
     def handle_status_click(e, w_name, start, end, current_is_paid, w_id, total_pay, type_str, total_unpaid_ot):
         if current_is_paid: 
             db.delete_period_record(start, end, w_name)
-            # Revert overtime back to unpaid
             c = db.conn.cursor()
             c.execute("UPDATE overtime_history SET status='Unpaid' WHERE worker_id=? AND date BETWEEN ? AND ? AND status='Paid'", (w_id, start, end))
             db.conn.commit()
@@ -188,7 +188,11 @@ def get_weekly_view(page: ft.Page, db, state, show_snack):
                 autofocus=True
             )
             
-            def save_payment(e):
+            try:
+                paid_input.selection = ft.TextSelection(0, len(paid_input.value))
+            except AttributeError: pass
+            
+            def save_payment(e=None):
                 try: 
                     actual_paid = float(paid_input.value)
                 except ValueError: 
@@ -208,7 +212,6 @@ def get_weekly_view(page: ft.Page, db, state, show_snack):
                         reason = "Previous Balance Carry Forward" if diff > 0 else "Overpayment Carry Forward"
                         db.add_advance(w_id, -diff, reason, next_week_start.strftime("%Y-%m-%d"))
 
-                    # Synchronize Overtime logic to Paid
                     if total_unpaid_ot > 0:
                         c = db.conn.cursor()
                         c.execute("UPDATE overtime_history SET status='Paid' WHERE worker_id=? AND date BETWEEN ? AND ? AND (status='Unpaid' OR status IS NULL)", (w_id, start, end))
@@ -240,117 +243,264 @@ def get_weekly_view(page: ft.Page, db, state, show_snack):
                 ]
             )
             
-            if dlg not in page.overlay: 
-                page.overlay.append(dlg)
-            dlg.open = True
-            page.update()
+            def open_dialog_safe_local(dlg):
+                if dlg not in page.overlay: page.overlay.append(dlg)
+                dlg.open = True; page.update()
+                
+            open_dialog_safe_local(dlg)
+
+    # --- SHARED PROFESSIONAL DETAIL TABLES ---
+    def build_ot_detail_table(rows):
+        list_items = [
+            ft.Container(
+                content=ft.Row([
+                    ft.Text("Date", width=90, weight="bold", size=12, color=COLOR_TEXT_SUB),
+                    ft.Text("Shift/Type", width=90, weight="bold", size=12, color=COLOR_TEXT_SUB),
+                    ft.Text("Hours", width=60, weight="bold", size=12, color=COLOR_TEXT_SUB),
+                    ft.Text("Amount", weight="bold", size=12, color=COLOR_TEXT_SUB, text_align=ft.TextAlign.RIGHT, expand=True)
+                ]),
+                padding=ft.Padding.only(bottom=10, left=10, right=10),
+                border=ft.border.only(bottom=ft.border.BorderSide(2, COLOR_BORDER))
+            )
+        ]
+        
+        total_amt = 0
+        for r in rows:
+            date_str = r[0]
+            hrs = float(r[1])
+            amt = float(r[2])
+            shift = r[3] if len(r) > 3 and r[3] else "--"
+            
+            total_amt += amt
+            
+            if shift == "Payment" or hrs == 0:
+                shift_disp = "Adjustment"
+                hrs_disp = "--"
+            else:
+                shift_disp = shift
+                hrs_disp = f"{hrs:g} h"
+
+            amt_color = "#10B981" if amt >= 0 else "#EF4444"
+            prefix = "+" if amt >= 0 else ""
+            
+            list_items.append(
+                ft.Container(
+                    content=ft.Row([
+                        ft.Text(date_str, width=90, size=13),
+                        ft.Text(shift_disp, width=90, size=12, color="grey"),
+                        ft.Text(hrs_disp, width=60, size=13),
+                        ft.Text(f"{prefix}{int(amt)} PKR", weight="bold", color=amt_color, size=13, text_align=ft.TextAlign.RIGHT, expand=True)
+                    ]),
+                    padding=10, border=ft.border.only(bottom=ft.border.BorderSide(1, COLOR_BORDER))
+                )
+            )
+        
+        if len(list_items) == 1:
+            list_items.append(ft.Container(content=ft.Text("No records found.", italic=True, color="grey"), padding=10))
+        else:
+            list_items.append(
+                ft.Container(
+                    content=ft.Row([
+                        ft.Text("Total", weight="bold", size=14), 
+                        ft.Text(f"{int(total_amt)} PKR", weight="bold", color="#10B981" if total_amt >= 0 else "#EF4444", size=14)
+                    ], alignment=ft.MainAxisAlignment.SPACE_BETWEEN), 
+                    padding=10, bgcolor="#F9FAFB"
+                )
+            )
+        return list_items
+
+    def build_adv_table(rows, is_prev_bal=False):
+        list_items = [
+            ft.Container(
+                content=ft.Row([
+                    ft.Text("Date", width=90, weight="bold", size=12, color=COLOR_TEXT_SUB),
+                    ft.Text("Reason", weight="bold", size=12, color=COLOR_TEXT_SUB, expand=True),
+                    ft.Text("Amount", width=100, weight="bold", size=12, color=COLOR_TEXT_SUB, text_align=ft.TextAlign.RIGHT)
+                ]),
+                padding=ft.Padding.only(bottom=10, left=10, right=10),
+                border=ft.border.only(bottom=ft.border.BorderSide(2, COLOR_BORDER))
+            )
+        ]
+        
+        total_amt = 0
+        filtered_rows = []
+        for r in rows:
+            rsn = r[2] if r[2] else ""
+            if is_prev_bal and "Carry Forward" not in rsn: continue
+            if not is_prev_bal and "Carry Forward" in rsn: continue
+            filtered_rows.append(r)
+
+        for r in filtered_rows:
+            date_str = r[0]
+            amt = float(r[1])
+            rsn = r[2] if r[2] else "--"
+            total_amt += amt
+            
+            color = "#EF4444" if amt > 0 else "#10B981"
+            prefix = "-" if amt > 0 else "+"
+            
+            list_items.append(
+                ft.Container(
+                    content=ft.Row([
+                        ft.Text(date_str, width=90, size=13),
+                        ft.Text(rsn, size=12, color="grey", expand=True),
+                        ft.Text(f"{prefix}{abs(int(amt))} PKR", weight="bold", color=color, size=13, text_align=ft.TextAlign.RIGHT)
+                    ]),
+                    padding=10, border=ft.border.only(bottom=ft.border.BorderSide(1, COLOR_BORDER))
+                )
+            )
+            
+        if not filtered_rows:
+            list_items.append(ft.Container(content=ft.Text("No records found.", italic=True, color="grey"), padding=10))
+        else:
+            final_color = "#EF4444" if total_amt > 0 else "#10B981"
+            final_prefix = "-" if total_amt > 0 else "+"
+            if total_amt == 0: final_prefix = ""; final_color = "grey"
+            
+            list_items.append(
+                ft.Container(
+                    content=ft.Row([
+                        ft.Text("Total", weight="bold", size=14), 
+                        ft.Text(f"{final_prefix}{abs(int(total_amt))} PKR", weight="bold", color=final_color, size=14)
+                    ], alignment=ft.MainAxisAlignment.SPACE_BETWEEN), 
+                    padding=10, bgcolor="#F9FAFB"
+                )
+            )
+        return list_items
 
     # --- DETAIL DIALOG FUNCTIONS ---
     def open_unpaid_ot_dialog(e, w_id, w_name, start_date, end_date):
         c = db.conn.cursor()
-        c.execute("SELECT date, hours, amount FROM overtime_history WHERE worker_id=? AND date BETWEEN ? AND ? AND (status='Unpaid' OR status IS NULL) ORDER BY date", (w_id, start_date, end_date))
+        c.execute("SELECT date, hours, amount, shift FROM overtime_history WHERE worker_id=? AND date BETWEEN ? AND ? AND (status='Unpaid' OR status IS NULL) ORDER BY date", (w_id, start_date, end_date))
         rows = c.fetchall()
-        
-        list_items = []
-        total_ot = 0
-        for r in rows:
-            total_ot += float(r[2])
-            list_items.append(
-                ft.Container(
-                    content=ft.Row([
-                        ft.Text(r[0], width=100, size=13),
-                        ft.Text(f"{r[1]} hrs", width=80, size=13),
-                        ft.Text(f"+{int(r[2])} PKR", weight="bold", color="#10B981", size=13, text_align=ft.TextAlign.RIGHT, expand=True)
-                    ], alignment=ft.MainAxisAlignment.SPACE_BETWEEN),
-                    padding=10, border=ft.border.only(bottom=ft.border.BorderSide(1, COLOR_BORDER))
-                )
-            )
-        if not list_items:
-            list_items.append(ft.Text("No unpaid overtime records found in this period.", italic=True, color="grey"))
-        else:
-            list_items.append(ft.Container(content=ft.Row([ft.Text("Total", weight="bold", size=14), ft.Text(f"+{int(total_ot)} PKR", weight="bold", color="#10B981", size=14)], alignment=ft.MainAxisAlignment.SPACE_BETWEEN), padding=10, bgcolor="#F9FAFB"))
+        list_items = build_ot_detail_table(rows)
             
         dlg = ft.AlertDialog(
             title=ft.Text(f"Unpaid OT Details: {w_name}", weight="bold", size=16),
-            content=ft.Container(content=ft.Column(list_items, scroll=ft.ScrollMode.AUTO, tight=True), width=400),
+            content=ft.Container(content=ft.Column(list_items, scroll=ft.ScrollMode.AUTO, tight=True), width=450),
             actions=[ft.TextButton("Close", on_click=lambda e: setattr(dlg, 'open', False) or page.update())]
         )
-        if dlg not in page.overlay: page.overlay.append(dlg)
-        dlg.open = True; page.update()
+        def open_dialog_safe_local(dlg):
+            if dlg not in page.overlay: page.overlay.append(dlg)
+            dlg.open = True; page.update()
+        open_dialog_safe_local(dlg)
 
     def open_prev_bal_dialog(e, w_id, w_name, start_date, end_date):
         c = db.conn.cursor()
         c.execute("SELECT date, amount, reason FROM advances WHERE worker_id=? AND date BETWEEN ? AND ? ORDER BY date", (w_id, start_date, end_date))
         rows = c.fetchall()
-        
-        list_items = []
-        total_bal = 0
-        for r in rows:
-            if r[2] and "Carry Forward" in r[2]:
-                amt = float(r[1])
-                total_bal += amt
-                color = "#EF4444" if amt > 0 else "#10B981"
-                disp_amt = f"-{int(amt)} PKR" if amt > 0 else f"+{abs(int(amt))} PKR"
-                list_items.append(
-                    ft.Container(
-                        content=ft.Row([
-                            ft.Text(r[0], width=90, size=13),
-                            ft.Text(r[2], expand=True, size=12, color="grey"),
-                            ft.Text(disp_amt, weight="bold", color=color, size=13, text_align=ft.TextAlign.RIGHT)
-                        ], alignment=ft.MainAxisAlignment.SPACE_BETWEEN),
-                        padding=10, border=ft.border.only(bottom=ft.border.BorderSide(1, COLOR_BORDER))
-                    )
-                )
-        if not list_items:
-            list_items.append(ft.Text("No previous balance records found in this period.", italic=True, color="grey"))
-        else:
-            final_col = "#EF4444" if total_bal > 0 else "#10B981"
-            final_disp = f"-{int(total_bal)} PKR" if total_bal > 0 else f"+{abs(int(total_bal))} PKR"
-            list_items.append(ft.Container(content=ft.Row([ft.Text("Total", weight="bold", size=14), ft.Text(final_disp, weight="bold", color=final_col, size=14)], alignment=ft.MainAxisAlignment.SPACE_BETWEEN), padding=10, bgcolor="#F9FAFB"))
+        list_items = build_adv_table(rows, is_prev_bal=True)
             
         dlg = ft.AlertDialog(
-            title=ft.Text(f"Previous Balance Details: {w_name}", weight="bold", size=16),
+            title=ft.Text(f"Previous Balance: {w_name}", weight="bold", size=16),
             content=ft.Container(content=ft.Column(list_items, scroll=ft.ScrollMode.AUTO, tight=True), width=450),
             actions=[ft.TextButton("Close", on_click=lambda e: setattr(dlg, 'open', False) or page.update())]
         )
-        if dlg not in page.overlay: page.overlay.append(dlg)
-        dlg.open = True; page.update()
+        def open_dialog_safe_local(dlg):
+            if dlg not in page.overlay: page.overlay.append(dlg)
+            dlg.open = True; page.update()
+        open_dialog_safe_local(dlg)
 
     def open_advances_dialog(e, w_id, w_name, start_date, end_date):
         c = db.conn.cursor()
         c.execute("SELECT date, amount, reason FROM advances WHERE worker_id=? AND date BETWEEN ? AND ? ORDER BY date", (w_id, start_date, end_date))
         rows = c.fetchall()
-        
-        list_items = []
-        total_adv = 0
-        for r in rows:
-            if not r[2] or "Carry Forward" not in r[2]:
-                amt = float(r[1])
-                total_adv += amt
-                color = "#EF4444" if amt > 0 else "grey"
-                disp_amt = f"-{int(amt)} PKR" if amt > 0 else f"{int(amt)} PKR"
-                list_items.append(
-                    ft.Container(
-                        content=ft.Row([
-                            ft.Text(r[0], width=90, size=13),
-                            ft.Text(r[2] if r[2] else "N/A", expand=True, size=12, color="grey"),
-                            ft.Text(disp_amt, weight="bold", color=color, size=13, text_align=ft.TextAlign.RIGHT)
-                        ], alignment=ft.MainAxisAlignment.SPACE_BETWEEN),
-                        padding=10, border=ft.border.only(bottom=ft.border.BorderSide(1, COLOR_BORDER))
-                    )
-                )
-        if not list_items:
-            list_items.append(ft.Text("No advances records found in this period.", italic=True, color="grey"))
-        else:
-            list_items.append(ft.Container(content=ft.Row([ft.Text("Total", weight="bold", size=14), ft.Text(f"-{int(total_adv)} PKR", weight="bold", color="#EF4444", size=14)], alignment=ft.MainAxisAlignment.SPACE_BETWEEN), padding=10, bgcolor="#F9FAFB"))
+        list_items = build_adv_table(rows, is_prev_bal=False)
             
         dlg = ft.AlertDialog(
             title=ft.Text(f"Advances Details: {w_name}", weight="bold", size=16),
             content=ft.Container(content=ft.Column(list_items, scroll=ft.ScrollMode.AUTO, tight=True), width=450),
             actions=[ft.TextButton("Close", on_click=lambda e: setattr(dlg, 'open', False) or page.update())]
         )
-        if dlg not in page.overlay: page.overlay.append(dlg)
-        dlg.open = True; page.update()
+        def open_dialog_safe_local(dlg):
+            if dlg not in page.overlay: page.overlay.append(dlg)
+            dlg.open = True; page.update()
+        open_dialog_safe_local(dlg)
+
+    # --- EXCEL / SUMMARY EXPORT/DIALOG LOGIC ---
+    def open_summary_dialog(e, w_id, w_name, start_date, end_date, include_advances=False):
+        c = db.conn.cursor()
+        
+        c.execute("SELECT date, status, amount_earned FROM attendance WHERE worker_id=? AND date BETWEEN ? AND ?", (w_id, start_date, end_date))
+        att_map = {r[0]: {"status": r[1], "earned": float(r[2])} for r in c.fetchall()}
+        
+        c.execute("SELECT date, SUM(hours), SUM(amount) FROM overtime_history WHERE worker_id=? AND date BETWEEN ? AND ? AND (status='Unpaid' OR status IS NULL) GROUP BY date", (w_id, start_date, end_date))
+        ot_map = {r[0]: {"hrs": float(r[1]), "amt": float(r[2])} for r in c.fetchall()}
+        
+        if include_advances:
+            # TRIGGERED BY NAME CLICK - Call our new export module
+            export_weekly_summary_to_excel(db, w_id, w_name, start_date, end_date, page, show_snack)
+                
+        else:
+            # THIS IS TRIGGERED BY FINAL AMOUNT CLICK - SHOW FLET UI DIALOG (No Advances)
+            columns = [
+                ft.DataColumn(ft.Text("Date", weight="bold", size=13)),
+                ft.DataColumn(ft.Text("Status", weight="bold", size=13)),
+                ft.DataColumn(ft.Text("Base Pay", weight="bold", size=13, text_align=ft.TextAlign.RIGHT)),
+                ft.DataColumn(ft.Text("OT Hrs", weight="bold", size=13, text_align=ft.TextAlign.RIGHT)),
+                ft.DataColumn(ft.Text("OT Pay", weight="bold", size=13, text_align=ft.TextAlign.RIGHT)),
+                ft.DataColumn(ft.Text("Daily Total", weight="bold", size=13, text_align=ft.TextAlign.RIGHT))
+            ]
+
+            rows = []
+            curr = datetime.strptime(start_date, "%Y-%m-%d")
+            end = datetime.strptime(end_date, "%Y-%m-%d")
+            
+            total_base = 0
+            total_ot = 0
+            
+            while curr <= end:
+                d_str = curr.strftime("%Y-%m-%d")
+                
+                att = att_map.get(d_str, {"status": "Not Marked", "earned": 0.0})
+                ot = ot_map.get(d_str, {"hrs": 0.0, "amt": 0.0})
+                
+                total_base += att["earned"]
+                total_ot += ot["amt"]
+                
+                status_color = "#10B981" if att["status"] == "Present" else ("#EF4444" if att["status"] == "Absent" else "grey")
+                daily_tot = att["earned"] + ot["amt"]
+                
+                cells = [
+                    ft.DataCell(ft.Text(d_str, size=13, weight="w500")),
+                    ft.DataCell(ft.Text(att["status"], color=status_color, size=12, weight="bold")),
+                    ft.DataCell(ft.Text(f"{int(att['earned'])}", size=13)),
+                    ft.DataCell(ft.Text(f"{ot['hrs']:g} h" if ot['hrs'] > 0 else "--", size=13, color=COLOR_PRIMARY if ot['hrs'] > 0 else "grey")),
+                    ft.DataCell(ft.Text(f"+{int(ot['amt'])}" if ot['amt'] > 0 else "--", size=13, weight="bold" if ot['amt'] > 0 else "normal", color="#10B981" if ot['amt'] > 0 else "grey")),
+                    ft.DataCell(ft.Text(f"{int(daily_tot)}", size=13, weight="bold", color="#10B981"))
+                ]
+                rows.append(ft.DataRow(cells=cells))
+                curr += timedelta(days=1)
+                
+            sum_cells = [
+                ft.DataCell(ft.Text("TOTAL", weight="bold", size=14)),
+                ft.DataCell(ft.Text("")),
+                ft.DataCell(ft.Text(f"{int(total_base)}", weight="bold", size=14)),
+                ft.DataCell(ft.Text("")),
+                ft.DataCell(ft.Text(f"+{int(total_ot)}", weight="bold", color="#10B981", size=14)),
+                ft.DataCell(ft.Text(f"{int(total_base + total_ot)}", weight="bold", color="#10B981", size=14))
+            ]
+            rows.append(ft.DataRow(cells=sum_cells))
+
+            dt = ft.DataTable(
+                columns=columns,
+                rows=rows,
+                heading_row_height=40,
+                data_row_min_height=35,
+                data_row_max_height=35,
+                border=ft.border.all(1, COLOR_BORDER)
+            )
+            
+            dlg = ft.AlertDialog(
+                title=ft.Text(f"Daily Payout Breakdown: {w_name}", weight="bold", size=18),
+                content=ft.Container(content=ft.Column([dt], scroll=ft.ScrollMode.AUTO, tight=True), width=550),
+                actions=[ft.TextButton("Close", on_click=lambda e: setattr(dlg, 'open', False) or page.update())]
+            )
+            def open_dialog_safe_local(dlg):
+                if dlg not in page.overlay: page.overlay.append(dlg)
+                dlg.open = True; page.update()
+            open_dialog_safe_local(dlg)
+
 
     def open_absent_dialog(e, w_id, w_name, abs_count, absent_dates):
         if not absent_dates:
@@ -381,10 +531,10 @@ def get_weekly_view(page: ft.Page, db, state, show_snack):
             ]
         )
         
-        if dlg not in page.overlay: 
-            page.overlay.append(dlg)
-        dlg.open = True
-        page.update()
+        def open_dialog_safe_local(dlg):
+            if dlg not in page.overlay: page.overlay.append(dlg)
+            dlg.open = True; page.update()
+        open_dialog_safe_local(dlg)
 
     def load_weekly_tab(e=None):
         new_list_controls = []
@@ -396,7 +546,6 @@ def get_weekly_view(page: ft.Page, db, state, show_snack):
         
         query = search_input.value.lower() if search_input.value else ""
 
-        # --- BULK FETCHING TO PREVENT LAG ---
         c = db.conn.cursor()
         
         c.execute("SELECT * FROM workers WHERE salary_type='Weekly'")
@@ -412,13 +561,11 @@ def get_weekly_view(page: ft.Page, db, state, show_snack):
         for r in c.fetchall():
             all_adv.setdefault(r[0], []).append((r[1], r[2]))
             
-        # ONLY Fetch Unpaid Overtime for the final salary calculation
         c.execute("SELECT worker_id, SUM(amount) FROM overtime_history WHERE date BETWEEN ? AND ? AND (status='Unpaid' OR status IS NULL) GROUP BY worker_id", (start_sql, end_sql))
         all_unpaid_ot = {r[0]: r[1] for r in c.fetchall()}
         
         c.execute("SELECT worker_name FROM records WHERE period_start=? AND period_end=? AND salary_type='Weekly'", (start_sql, end_sql))
         paid_workers = {r[0] for r in c.fetchall()}
-        # ------------------------------------
 
         header_row = ft.Row([
             ft.Text("ID", width=50, weight="bold", color=COLOR_TEXT_SUB, size=13),
@@ -437,7 +584,7 @@ def get_weekly_view(page: ft.Page, db, state, show_snack):
             ft.Container(
                 content=header_row,
                 bgcolor=COLOR_BG_LIGHT, 
-                padding=ft.padding.symmetric(vertical=10, horizontal=15), 
+                padding=ft.Padding.symmetric(vertical=10, horizontal=15), 
                 border=ft.border.only(bottom=ft.border.BorderSide(2, COLOR_BORDER))
             )
         )
@@ -466,7 +613,6 @@ def get_weekly_view(page: ft.Page, db, state, show_snack):
             
             overtime_unpaid_amt = all_unpaid_ot.get(w_id, 0.0)
             
-            # Final calculation includes base earned + overtime (unpaid) - advances
             final = earned - carry_forward - standard_adv + overtime_unpaid_amt
             is_paid = w_name in paid_workers
             
@@ -476,7 +622,7 @@ def get_weekly_view(page: ft.Page, db, state, show_snack):
             status_btn = ft.Container(
                 content=ft.Text("PAID" if is_paid else "PENDING", size=11, weight="bold", color="white", text_align=ft.TextAlign.CENTER),
                 bgcolor="#10B981" if is_paid else "#EF4444", 
-                padding=ft.padding.symmetric(horizontal=12, vertical=6), 
+                padding=ft.Padding.symmetric(horizontal=12, vertical=6), 
                 border_radius=5, 
                 on_click=make_status_click(w_id, w_name, final, is_paid, overtime_unpaid_amt),
                 ink=True, 
@@ -539,7 +685,19 @@ def get_weekly_view(page: ft.Page, db, state, show_snack):
 
             final_color = "#10B981" if final >= 0 else "#EF4444"
 
-            # FAST HOVER EFFECT
+            # EXCEL & SUMMARY CLICKS
+            name_btn = ft.Container(
+                content=ft.Text(w_name, weight="bold", color=COLOR_TEXT_MAIN, size=15),
+                ink=True, on_click=lambda e, wid=w_id, wn=w_name: open_summary_dialog(e, wid, wn, start_sql, end_sql, include_advances=True),
+                tooltip="Open Full Excel Summary"
+            )
+
+            final_btn = ft.Container(
+                content=ft.Text(f"{int(final):,} PKR", weight="bold", color=final_color, size=15),
+                ink=True, on_click=lambda e, wid=w_id, wn=w_name: open_summary_dialog(e, wid, wn, start_sql, end_sql, include_advances=False),
+                tooltip="View Daily Payout Breakdown"
+            )
+
             def make_hover(idx):
                 def hover(e):
                     e.control.bgcolor = "#F1F5F9" if e.data == "true" else ("white" if idx % 2 == 0 else "#FAFAFA")
@@ -548,20 +706,20 @@ def get_weekly_view(page: ft.Page, db, state, show_snack):
 
             worker_row = ft.Row([
                 ft.Text(display_id, width=50, weight="w600", color=COLOR_TEXT_MAIN, size=13),
-                ft.Text(w_name, width=140, weight="bold", color=COLOR_TEXT_MAIN, size=15),
+                ft.Container(content=name_btn, width=140),
                 ft.Text(f"{int(per_day):,}", width=70, color=COLOR_TEXT_SUB, size=13),
                 absent_btn, 
                 ot_btn, 
                 prev_btn, 
                 advances_btn,
                 ft.Container(expand=True), 
-                ft.Text(f"{int(final):,} PKR", width=110, weight="bold", color=final_color, size=15),
+                ft.Container(content=final_btn, width=110),
                 ft.Container(content=status_btn, width=100)
             ], vertical_alignment=ft.CrossAxisAlignment.CENTER)
 
             worker_container = ft.Container(
                 content=worker_row, 
-                padding=ft.padding.symmetric(vertical=8, horizontal=15), 
+                padding=ft.Padding.symmetric(vertical=8, horizontal=15), 
                 bgcolor="white" if visible_index % 2 == 0 else "#FAFAFA", 
                 border=ft.border.only(bottom=ft.border.BorderSide(1, COLOR_BORDER)), 
                 on_hover=make_hover(visible_index)
@@ -635,9 +793,9 @@ def get_weekly_view(page: ft.Page, db, state, show_snack):
     top_row = ft.Row([
         ft.Text("Weekly View", size=22, weight="bold", color=COLOR_TEXT_MAIN),
         ft.Row([
-            ft.IconButton(icon=ft.Icons.ARROW_BACK, on_click=change_period_left),
+            ft.IconButton(icon=ft.Icons.CHEVRON_LEFT, on_click=change_period_left),
             month_clickable,
-            ft.IconButton(icon=ft.Icons.ARROW_FORWARD, on_click=change_period_right),
+            ft.IconButton(icon=ft.Icons.CHEVRON_RIGHT, on_click=change_period_right),
             ft.TextButton("This Week", icon=ft.Icons.TODAY, on_click=reset_to_this_week, style=ft.ButtonStyle(color=COLOR_PRIMARY))
         ], alignment=ft.MainAxisAlignment.CENTER),
         ft.Row([

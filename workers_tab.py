@@ -1,6 +1,4 @@
 import flet as ft
-import requests
-from requests.auth import HTTPDigestAuth
 import threading
 
 def get_workers_view(page: ft.Page, db, show_snack, open_dialog_safe, reload_weekly_cb, reload_monthly_cb):
@@ -10,108 +8,11 @@ def get_workers_view(page: ft.Page, db, show_snack, open_dialog_safe, reload_wee
     COLOR_BORDER = "#E5E7EB"
     COLOR_BG_LIGHT = "#F3F4F6"
 
-    # --- DEVICE CONFIGURATION ---
-    DEVICE_IP = "192.168.100.68" 
-    USERNAME = "admin"
-    PASSWORD = "YourExactPassword" # Replace with your actual password
-    
-    # Initialize Biometric Table safely
-    try:
-        db.cursor.execute("CREATE TABLE IF NOT EXISTS worker_creds (custom_id INTEGER PRIMARY KEY, face INTEGER, fp INTEGER, card INTEGER)")
-        db.conn.commit()
-    except Exception:
-        pass
-
     workers_list = ft.ListView(spacing=0, expand=True)
     filter_state = {"mode": "All"}
     stats_container = ft.Container()
     current_edit_id = [None] 
     dialog_mode = ["Add"]
-    is_syncing = [False]
-
-    # --- HIKVISION BACKGROUND TASKS ---
-    
-    def sync_hikvision_in_background():
-        if is_syncing[0]: return
-        is_syncing[0] = True
-        
-        sync_btn.text = "Syncing..."
-        sync_btn.icon = ft.Icons.HOURGLASS_TOP
-        sync_btn.bgcolor = "grey"
-        page.update()
-
-        url = f"http://{DEVICE_IP}/ISAPI/AccessControl/UserInfo/Search?format=json"
-        payload = {"UserInfoSearchCond": {"searchID": "1", "searchResultPosition": 0, "maxResults": 1000}}
-        
-        try:
-            response = requests.post(url, auth=HTTPDigestAuth(USERNAME, PASSWORD), json=payload, timeout=5)
-            
-            if response.status_code == 200:
-                data = response.json()
-                if "UserInfoSearch" in data and "UserInfo" in data["UserInfoSearch"]:
-                    users = data["UserInfoSearch"]["UserInfo"]
-                    
-                    existing_workers = {w[1].lower() for w in db.get_workers()}
-                    existing_cids = {str(w[8]) for w in db.get_workers() if w[8]}
-
-                    added_count = 0
-                    for u in users:
-                        name = u.get("name", "Unknown")
-                        emp_no = u.get("employeeNo", "")
-                        
-                        if emp_no.isdigit():
-                            cid = int(emp_no)
-                            
-                            has_face = 1 if u.get('numOfFace', 0) > 0 else 0
-                            has_fp = 1 if (u.get('numOfFP', 0) > 0 or u.get('numOfFingerPrint', 0) > 0) else 0
-                            has_card = 1 if (u.get('ValidCardNum', 0) > 0 or u.get('numOfCard', 0) > 0) else 0
-                            
-                            db.cursor.execute("INSERT OR REPLACE INTO worker_creds (custom_id, face, fp, card) VALUES (?, ?, ?, ?)", (cid, has_face, has_fp, has_card))
-                            db.conn.commit()
-
-                            if name.lower() not in existing_workers and emp_no not in existing_cids:
-                                db.add_worker(name, "", "", "", "Active", "Weekly", 0.0, cid, "Device Import")
-                                added_count += 1
-                    
-                    show_snack(page, f"Sync Complete! Added {added_count} new workers.", "green")
-            else:
-                show_snack(page, f"Device Sync Failed (Error {response.status_code})", "red")
-        except Exception:
-            show_snack(page, "Sync Failed: Device not reachable or Auth Error.", "red")
-            
-        is_syncing[0] = False
-        sync_btn.text = "Sync Device"
-        sync_btn.icon = ft.Icons.SYNC
-        sync_btn.bgcolor = "#F59E0B"
-        load_workers_ui()
-
-    def push_add_to_device(name, custom_id):
-        try:
-            url = f"http://{DEVICE_IP}/ISAPI/AccessControl/UserInfo/Record?format=json"
-            payload = {
-                "UserInfo": {
-                    "employeeNo": str(custom_id),
-                    "name": name,
-                    "userType": "normal",
-                    "Valid": {"enable": True, "beginTime": "2020-01-01T00:00:00", "endTime": "2035-12-31T23:59:59"}
-                }
-            }
-            requests.post(url, auth=HTTPDigestAuth(USERNAME, PASSWORD), json=payload, timeout=3)
-        except Exception:
-            pass 
-
-    def push_delete_to_device(custom_id):
-        try:
-            url = f"http://{DEVICE_IP}/ISAPI/AccessControl/UserInfo/Delete?format=json"
-            payload = {
-                "UserInfoDetail": {
-                    "mode": "byEmployeeNo",
-                    "EmployeeNoCond": {"EmployeeNoList": [{"employeeNo": str(custom_id)}]}
-                }
-            }
-            requests.put(url, auth=HTTPDigestAuth(USERNAME, PASSWORD), json=payload, timeout=3)
-        except Exception:
-            pass
 
     # --- UI HELPER FUNCTIONS ---
 
@@ -232,11 +133,9 @@ def get_workers_view(page: ft.Page, db, show_snack, open_dialog_safe, reload_wee
             show_snack(page, f"Error: ID {prefix}{cid} is already assigned!", "red")
             return
 
-        # 1. Instantly Close the Dialog
         close_dialog(None)
-        show_snack(page, "Worker Added & Pushed to Device!", "green")
+        show_snack(page, "Worker Added!", "green")
 
-        # 2. Run Database & Network in Background
         def process_add():
             try:
                 db.add_worker(
@@ -244,10 +143,7 @@ def get_workers_view(page: ft.Page, db, show_snack, open_dialog_safe, reload_wee
                     status_input.value, salary_type_dd.value, float(salary_input.value if salary_input.value else 0),
                     cid, factory_input.value
                 )
-                if cid is not None:
-                    push_add_to_device(name_input.value, cid)
                 
-                # Refresh UI only after math is done
                 load_workers_ui()
                 reload_weekly_cb()
                 reload_monthly_cb()
@@ -263,11 +159,9 @@ def get_workers_view(page: ft.Page, db, show_snack, open_dialog_safe, reload_wee
             show_snack(page, f"Error: ID {prefix}{cid} is already assigned!", "red")
             return
 
-        # 1. Instantly Close the Dialog
         close_dialog(None)
         show_snack(page, "Worker Updated Successfully!", "green")
 
-        # 2. Run Database & Network in Background
         def process_edit():
             try:
                 db.update_worker(
@@ -275,8 +169,6 @@ def get_workers_view(page: ft.Page, db, show_snack, open_dialog_safe, reload_wee
                     address_input.value, status_input.value, salary_type_dd.value, float(salary_input.value if salary_input.value else 0),
                     cid, factory_input.value
                 )
-                if cid:
-                    push_add_to_device(name_input.value, cid)
                 
                 load_workers_ui()
                 reload_weekly_cb()
@@ -393,12 +285,6 @@ def get_workers_view(page: ft.Page, db, show_snack, open_dialog_safe, reload_wee
         filtered_workers = list(db.get_workers(filter_val))
         filtered_workers.sort(key=lambda w: int(w[8]) if w[8] not in (None, "") else 0)
 
-        try:
-            db.cursor.execute("SELECT custom_id, face, fp, card FROM worker_creds")
-            creds = {row[0]: {'face': row[1], 'fp': row[2], 'card': row[3]} for row in db.cursor.fetchall()}
-        except Exception:
-            creds = {}
-
         query = search_input.value.lower() if search_input.value else ""
         update_status_menu()
         update_factory_menu()
@@ -425,16 +311,8 @@ def get_workers_view(page: ft.Page, db, show_snack, open_dialog_safe, reload_wee
             if query and query not in w_name.lower() and query not in display_id.lower() and query not in w_factory.lower():
                 continue
 
-            bio_icons = []
-            if w_custom_id and int(w_custom_id) in creds:
-                cred_info = creds[int(w_custom_id)]
-                if cred_info['face']: bio_icons.append(ft.Icon(ft.Icons.FACE, size=14, color="#3B82F6", tooltip="Face Enrolled"))
-                if cred_info['fp']: bio_icons.append(ft.Icon(ft.Icons.FINGERPRINT, size=14, color="#10B981", tooltip="Fingerprint Enrolled"))
-                if cred_info['card']: bio_icons.append(ft.Icon(ft.Icons.CREDIT_CARD, size=14, color="#F59E0B", tooltip="Card Enrolled"))
-
             name_column = ft.Row([
-                ft.Text(w_name, weight="bold", color=COLOR_TEXT_MAIN, size=15),
-                ft.Row(bio_icons, spacing=2)
+                ft.Text(w_name, weight="bold", color=COLOR_TEXT_MAIN, size=15)
             ], width=180, spacing=6, alignment=ft.MainAxisAlignment.START)
 
             def edit_click(e, worker=w):
@@ -451,16 +329,12 @@ def get_workers_view(page: ft.Page, db, show_snack, open_dialog_safe, reload_wee
             
             def delete_click(e, worker_id=w_id, cid=w_custom_id):
                 def confirm_del(e):
-                    # 1. Close dialog instantly
                     dlg.open = False
                     page.update()
-                    show_snack(page, "Worker Moved to Trash & Deleted from Device", "orange")
+                    show_snack(page, "Worker Moved to Trash", "orange")
                     
-                    # 2. Process deletion in background
                     def process_del():
                         db.soft_delete_worker(worker_id)
-                        if cid is not None:
-                            push_delete_to_device(cid)
                         load_workers_ui()
                         reload_weekly_cb()
                         reload_monthly_cb()
@@ -472,7 +346,7 @@ def get_workers_view(page: ft.Page, db, show_snack, open_dialog_safe, reload_wee
                 
                 dlg = ft.AlertDialog(
                     title=ft.Text("Move to Trash?", size=16, weight="bold"),
-                    content=ft.Text("This deletes the worker from the app AND the physical attendance device.", size=13),
+                    content=ft.Text("This deletes the worker from the app.", size=13),
                     actions=[ft.TextButton("Yes, Delete", on_click=confirm_del, style=ft.ButtonStyle(color="red")), ft.TextButton("No", on_click=cancel_del)]
                 )
                 open_dialog_safe(page, dlg)
@@ -508,12 +382,11 @@ def get_workers_view(page: ft.Page, db, show_snack, open_dialog_safe, reload_wee
         page.update()
 
     add_btn = ft.ElevatedButton("Add Worker", icon=ft.Icons.PERSON_ADD, on_click=open_add_dialog, bgcolor=COLOR_PRIMARY, color="white", height=40)
-    sync_btn = ft.ElevatedButton("Sync Device", icon=ft.Icons.SYNC, on_click=lambda e: page.run_thread(sync_hikvision_in_background), bgcolor="#F59E0B", color="white", height=40)
 
     main_view = ft.Column([
         ft.Row([
             ft.Text("Manage Workers", size=22, weight="bold", color=COLOR_TEXT_MAIN), 
-            ft.Row([search_input, sync_btn, add_btn], spacing=10)
+            ft.Row([search_input, add_btn], spacing=10)
         ], alignment=ft.MainAxisAlignment.SPACE_BETWEEN),
         ft.Divider(height=5, color="transparent"), stats_container, ft.Divider(height=5, color="transparent"), 
         ft.Container(content=workers_list, expand=True, bgcolor="white", border_radius=8, border=ft.border.all(1, COLOR_BORDER), shadow=ft.BoxShadow(spread_radius=1, blur_radius=2, color="#0D000000", offset=ft.Offset(0, 1)), clip_behavior=ft.ClipBehavior.HARD_EDGE)
